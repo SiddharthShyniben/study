@@ -136,7 +136,7 @@
 		try {
 			const chapterIds = [...new Set(selectedSubtopics.map(s => s.parentChapterId))];
 
-			await createStudySession({
+			const data = {
 				userId: $user.uid,
 				startTime,
 				endTime,
@@ -146,8 +146,13 @@
 				type: sessionType === 'grind' ? 'focused_study' : 
 					  sessionType === 'review' ? 'review' :
 					  sessionType === 'problem-solving' ? 'practice_test' : 'reading',
-				notes: notes.trim() || undefined
-			});
+			}
+
+			if (notes.trim()) {
+				data.notes = notes.trim();
+			}
+
+			await createStudySession(data);
 
 			resetSession();
 			goto('/');
