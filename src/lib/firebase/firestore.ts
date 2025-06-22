@@ -201,7 +201,7 @@ export const getChapterSubtopics = async (chapterId: string): Promise<Subtopic[]
 	const subtopicsQuery = query(
 		collection(db, 'subtopics'),
 		where('parentChapterId', '==', chapterId),
-		orderBy('updatedAt', 'desc')
+		orderBy('createdAt', 'asc')
 	);
 	const querySnapshot = await getDocs(subtopicsQuery);
 

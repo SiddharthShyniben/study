@@ -172,21 +172,31 @@ function getGrindCandidates(
 }
 
 async function groupBySubject(subtopics: Subtopic[]): Promise<Map<string, Subtopic[]>> {
-	const subjectGroups = new Map<string, Subtopic[]>();
+	const subjectGroups = new Map();
 
-	for (const subtopic of subtopics) {
-		try {
-			const chapter = await getChapter(subtopic.parentChapterId);
-			const subject = chapter?.subject || 'Unknown';
+	// Get unique chapter IDs
+	const chapterIds = [...new Set(subtopics.map(s => s.parentChapterId))];
 
-			if (!subjectGroups.has(subject)) {
-				subjectGroups.set(subject, []);
-			}
-			subjectGroups.get(subject)!.push(subtopic);
-		} catch (error) {
-			console.warn(`Could not load chapter for subtopic ${subtopic.id}:`, error);
+	// Batch load all chapters at once
+	const chapterPromises = chapterIds.map(id => getChapter(id));
+	const chapters = await Promise.all(chapterPromises);
+
+	// Create chapter ID to subject mapping
+	const chapterToSubject = new Map();
+	chapters.forEach(chapter => {
+		if (chapter) {
+			chapterToSubject.set(chapter.id, chapter.subject);
 		}
-	}
+	});
+
+	// Group subtopics by subject
+	subtopics.forEach(subtopic => {
+		const subject = chapterToSubject.get(subtopic.parentChapterId) || 'Unknown';
+		if (!subjectGroups.has(subject)) {
+			subjectGroups.set(subject, []);
+		}
+		subjectGroups.get(subject)!.push(subtopic);
+	});
 
 	return subjectGroups;
 }

@@ -1,26 +1,44 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { user, authLoading } from '$lib/stores/auth';
+	import { suggestionsStore } from '$lib/stores/suggestions';
 	import { goto } from '$app/navigation';
 	import { updateSubtopic } from '$lib/firebase/firestore';
 	import getStudySuggestions, { type SuggestionItem } from '$lib/suggestions/engine';
+	import { derived } from 'svelte/store';
 
-	let suggestions: SuggestionItem[] = [];
-	let estimatedDuration = 0;
-	let selectedIds: string[] = [];
-	let loading = true;
-	let error = '';
+	// Replace reactive statements with derived stores
+	const reviewSuggestions = derived(
+		[() => suggestions],
+		([$suggestions]) => $suggestions.filter(s => s.type === 'review')
+	);
+
+	const grindSuggestions = derived(
+		[() => suggestions],
+		([$suggestions]) => $suggestions.filter(s => s.type === 'grind')
+	);
+
+	const selectedDuration = derived(
+		[() => selectedIds, () => suggestions],
+		([$selectedIds, $suggestions]) => 
+			$selectedIds.reduce((total, id) => {
+				const suggestion = $suggestions.find(s => s.id === id);
+				return total + (suggestion?.type === 'review' ? 5 : 15);
+			}, 0)
+	);
+
+	// AI Suggestions state
+	$: smartSuggestions = $suggestionsStore.suggestions;
+	$: smartSuggestionsLoading = $suggestionsStore.loading;
+	$: smartSuggestionsError = $suggestionsStore.error;
 
 	$: if (!$authLoading && !$user) {
 		goto('/login');
 	}
 
-	$: reviewSuggestions = suggestions.filter(s => s.type === 'review');
-	$: grindSuggestions = suggestions.filter(s => s.type === 'grind');
-	$: selectedDuration = selectedIds.reduce((total, id) => {
-		const suggestion = suggestions.find(s => s.id === id);
-		return total + (suggestion?.type === 'review' ? 5 : 15);
-	}, 0);
+	$: reviewSuggestions = $reviewSuggestions;
+	$: grindSuggestions = $grindSuggestions;
+	$: selectedDuration = $selectedDuration;
 
 	const loadSuggestions = async () => {
 		if (!$user) return;
@@ -29,14 +47,19 @@
 		error = '';
 
 		try {
+			// Load study suggestions
 			const result = await getStudySuggestions($user.uid, {
 				maxReviewItems: 15,
 				maxGrindItems: 8,
 				maxNewItemsPerDay: 5
 			});
-			
+
 			suggestions = result.suggestions;
 			estimatedDuration = result.estimatedDuration;
+			loading = false;
+
+			// Load AI suggestions
+			await suggestionsStore.loadSuggestions($user.uid);
 		} catch (err) {
 			console.error('Error loading suggestions:', err);
 			error = 'Failed to load study suggestions';
@@ -73,14 +96,14 @@
 
 	const startStudySession = () => {
 		if (selectedIds.length === 0) return;
-		
+
 		const reviewIds = selectedIds.filter(id => 
 			suggestions.find(s => s.id === id)?.type === 'review'
 		);
 		const grindIds = selectedIds.filter(id => 
 			suggestions.find(s => s.id === id)?.type === 'grind'
 		);
-		
+
 		const params = new URLSearchParams();
 		if (reviewIds.length > 0) {
 			params.set('reviewIds', reviewIds.join(','));
@@ -88,7 +111,7 @@
 		if (grindIds.length > 0) {
 			params.set('grindIds', grindIds.join(','));
 		}
-		
+
 		goto(`/study?${params.toString()}`);
 	};
 
@@ -142,10 +165,61 @@
 		</div>
 	{:else if $user}
 		<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+			<!-- Smart Study Insights Section -->
+			<div class="mb-8">
+				<div class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
+					<div class="flex items-center justify-between mb-4">
+						<div>
+							<h2 class="text-2xl font-bold">Smart Study Insights</h2>
+							<p class="text-indigo-100">AI-powered recommendations based on your study patterns</p>
+						</div>
+						{#if $user && !smartSuggestionsLoading}
+							<button
+								on:click={() => suggestionsStore.refresh($user.uid)}
+								class="bg-white bg-opacity-20 hover:bg-opacity-30 text-grey-200 px-4 py-2 rounded-lg transition-colors duration-200"
+							>
+								Refresh
+							</button>
+						{/if}
+					</div>
+
+					{#if smartSuggestionsLoading}
+						<div class="flex items-center space-x-3">
+							<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+								<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+							</svg>
+							<span>Analyzing your study patterns...</span>
+						</div>
+					{:else if smartSuggestionsError}
+						<div class="bg-red-500 bg-opacity-20 border border-red-300 rounded-lg p-4">
+							<p class="text-red-100">Failed to load insights: {smartSuggestionsError}</p>
+						</div>
+					{:else if smartSuggestions.length > 0}
+						<div class="space-y-3">
+							{#each smartSuggestions as suggestion, index}
+								<div class="bg-white bg-opacity-10 rounded-lg p-4 border border-white border-opacity-20">
+									<div class="flex items-start space-x-3">
+										<div class="flex-shrink-0 w-6 h-6 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
+											<span class="text-sm font-medium text-grey-900">{index + 1}</span>
+										</div>
+										<p class="text-grey-900 leading-relaxed">{suggestion}</p>
+									</div>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<div class="bg-white bg-opacity-10 rounded-lg p-4 border border-white border-opacity-20">
+							<p class="text-white">You're doing great! No specific suggestions today.</p>
+						</div>
+					{/if}
+				</div>
+			</div>
+
 			<div class="text-center mb-8">
 				<h1 class="text-3xl font-extrabold text-gray-900">Study Suggestions</h1>
 				<p class="mt-4 text-lg text-gray-600">
-					AI-powered recommendations using spaced repetition and difficulty analysis
+					Intelligent recommendations using spaced repetition and difficulty analysis
 				</p>
 				{#if estimatedDuration > 0}
 					<p class="mt-2 text-sm text-gray-500">
